@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>OPCA - Offline Assistant</title>
+    <style>
+        body { font-family: Arial; margin: 20px; }
+        .tab { overflow: hidden; border-bottom: 1px solid #ccc; }
+        .tab button { background-color: inherit; float: left; border: none; outline: none; cursor: pointer; padding: 14px 16px; transition: 0.3s; }
+        .tab button:hover { background-color: #ddd; }
+        .tab button.active { background-color: #ccc; }
+        .tabcontent { display: none; padding: 20px; border: 1px solid #ccc; border-top: none; }
+        textarea, input { width: 80%; padding: 8px; margin: 8px 0; }
+        button { padding: 8px 16px; background-color: #007bff; color: white; border: none; cursor: pointer; }
+        pre { background: #f4f4f4; padding: 10px; overflow-x: auto; }
+        .status { margin-top: 10px; font-weight: bold; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+    </style>
+</head>
+<body>
+<h1>📄 Offline Product & Compliance Assistant</h1>
+<p>All data stays on your machine. No internet required after setup.</p>
+
+<div class="tab">
+    <button class="tablinks" onclick="openTab(event, 'Ingest')" id="defaultOpen">Ingest Documents</button>
+    <button class="tablinks" onclick="openTab(event, 'Audit')">Audit Ingested Files</button>
+    <button class="tablinks" onclick="openTab(event, 'Query')">Ask a Question</button>
+</div>
+
+<div id="Ingest" class="tabcontent">
+    <h3>📂 Add Documents to Knowledge Base</h3>
+    <p>Provide a file path (absolute) or folder path:</p>
+    <input type="text" id="ingestPath" placeholder="e.g., C:\Users\Meghanath\Desktop\policy.pdf" style="width: 70%;">
+    <select id="ingestType">
+        <option value="file">File</option>
+        <option value="folder">Folder</option>
+    </select>
+    <input type="text" id="ingestCategory" placeholder="category (optional)" style="width: 30%;">
+    <button onclick="startIngest()">Ingest</button>
+    <div id="ingestStatus" class="status"></div>
+</div>
+
+<div id="Audit" class="tabcontent">
+    <h3>📋 Ingested Files</h3>
+    <button onclick="loadAudit()">Refresh Audit</button>
+    <div id="auditTable"></div>
+</div>
+
+<div id="Query" class="tabcontent">
+    <h3>❓ Ask a Question</h3>
+    <textarea id="question" rows="3" placeholder="Type your question here..."></textarea><br>
+    <button onclick="askQuestion()">Ask</button>
+    <div id="queryResult" class="status"></div>
+</div>
+
+<script>
+    function openTab(evt, tabName) {
+        var i, tabcontent, tablinks;
+        tabcontent = document.getElementsByClassName("tabcontent");
+        for (i = 0; i < tabcontent.length; i++) {
+            tabcontent[i].style.display = "none";
+        }
+        tablinks = document.getElementsByClassName("tablinks");
+        for (i = 0; i < tablinks.length; i++) {
+            tablinks[i].className = tablinks[i].className.replace(" active", "");
+        }
+        document.getElementById(tabName).style.display = "block";
+        evt.currentTarget.className += " active";
+    }
+    document.getElementById("defaultOpen").click();
+
+async function startIngest() {
+    let path = document.getElementById("ingestPath").value;
+    let isFolder = document.getElementById("ingestType").value === "folder";
+    let category = document.getElementById("ingestCategory").value;
+    if (!path) { alert("Please enter a path"); return; }
+    document.getElementById("ingestStatus").innerHTML = "⏳ Ingestion started, processing in background...";
+    try {
+        let resp = await fetch('/api/ingest', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: path, is_folder: isFolder, category: category })
+        });
+        let data = await resp.json();
+        if (resp.ok) {
+            // Poll for status every 2 seconds
+            let interval = setInterval(async () => {
+                let statusResp = await fetch('/api/status');
+                let status = await statusResp.json();
+                if (status.status === "completed") {
+                    document.getElementById("ingestStatus").innerHTML = "✅ " + status.message;
+                    clearInterval(interval);
+                    // Refresh audit automatically
+                    loadAudit();
+                } else if (status.status === "failed") {
+                    document.getElementById("ingestStatus").innerHTML = "❌ " + status.message;
+                    clearInterval(interval);
+                } else {
+                    document.getElementById("ingestStatus").innerHTML = "⏳ " + status.message;
+                }
+            }, 2000);
+        } else {
+            document.getElementById("ingestStatus").innerHTML = "❌ Error: " + data.error;
+        }
+    } catch(e) {
+        document.getElementById("ingestStatus").innerHTML = "❌ " + e;
+    }
+}
+
+    async function loadAudit() {
+    document.getElementById("auditTable").innerHTML = "Loading...";
+    try {
+        let resp = await fetch('/api/audit');
+        let files = await resp.json();
+        if (!Array.isArray(files)) throw new Error("Invalid response");
+        if (files.length === 0) {
+            document.getElementById("auditTable").innerHTML = "<p>No files ingested yet.</p>";
+            return;
+        }
+        // Build proper HTML table
+        let html = `<table>
+            <thead>
+                <tr><th>Hash</th><th>File Path</th><th>Ingested On</th><th>Pages</th><th>Words</th></tr>
+            </thead>
+            <tbody>`;
+        for (let f of files) {
+            html += `<tr>
+                        <td>${f.hash}</td>
+                        <td>${f.path}</td>
+                        <td>${f.ingested_on}</td>
+                        <td>${f.pages || 0}</td>
+                        <td>${f.words || 0}</td>
+                     </tr>`;
+        }
+        html += `</tbody></table>`;
+        document.getElementById("auditTable").innerHTML = html;
+    } catch(e) {
+        document.getElementById("auditTable").innerHTML = "<p>Error loading audit.</p>";
+        console.error(e);
+    }
+}
+
+    async function askQuestion() {
+        let question = document.getElementById("question").value;
+        if (!question) { alert("Enter a question"); return; }
+        document.getElementById("queryResult").innerHTML = "Thinking...";
+        try {
+            let resp = await fetch('/api/query', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ question: question })
+            });
+            let data = await resp.json();
+            if (resp.ok) {
+                document.getElementById("queryResult").innerHTML = `<strong>Answer:</strong><br><pre>${data.answer}</pre>`;
+            } else {
+                document.getElementById("queryResult").innerHTML = "❌ Error: " + data.error;
+            }
+        } catch(e) {
+            document.getElementById("queryResult").innerHTML = "❌ " + e;
+        }
+    }
+</script>
+</body>
+</html>

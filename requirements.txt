@@ -1,0 +1,17 @@
+langchain
+langchain-community
+langchain-ollama
+chromadb
+sentence-transformers
+pypdf
+python-docx
+unstructured
+openpyxl
+watchdog
+pandas
+numpy
+tiktoken
+streamlit
+flask
+flask-cors
+PyPDF2
